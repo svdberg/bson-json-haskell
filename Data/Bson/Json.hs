@@ -11,24 +11,27 @@ import qualified Data.Vector as V
 import qualified Data.HashMap.Lazy as M
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import qualified Data.UString as U
 import qualified Data.ByteString.Char8 as S
+import qualified Data.CompactString as C
 import Control.Monad
 import Control.Applicative
 
 instance J.ToJSON B.Document where
 	toJSON fields = J.object $ map toJSONPair fields
-		where toJSONPair (label B.:= value) = (T.decodeUtf8 $ U.toByteString label, J.toJSON value)
+		where toJSONPair (label B.:= value) = (T.decodeUtf8 $ C.toByteString label, J.toJSON value)
+
+instance J.ToJSON B.Field where
+  toJSON (label B.:= value) = J.object [(T.decodeUtf8 $ C.toByteString label, J.toJSON value)]
 
 instance J.FromJSON B.Document where
 	parseJSON (J.Object dict) = mapM parseJSONPair $ M.toList dict where
-		parseJSONPair (label, value) = fmap (U.fromByteString_ (T.encodeUtf8 label) B.:=) $ J.parseJSON value
+		parseJSONPair (label, value) = fmap (C.fromByteString_ (T.encodeUtf8 label) B.:=) $ J.parseJSON value
 	parseJSON x = fail $ "BSON document expects to be deriving from a JSON Object, not " ++ show x
 
 instance J.ToJSON B.Value where
 	toJSON v = case v of
 		B.Float double -> J.Number $ J.D double
-		B.String string -> J.String $ T.decodeUtf8 $ U.toByteString string
+		B.String string -> J.String $ T.decodeUtf8 $ C.toByteString string
 		B.Doc document -> J.Object obj where J.Object obj = J.toJSON document
 		B.Array values -> J.Array $ V.fromList $ map J.toJSON values
 		B.Bool bool -> J.Bool bool
@@ -66,7 +69,7 @@ instance J.FromJSON B.Value where
 		J.Array vec -> B.Array <$> mapM J.parseJSON (V.toList vec)
 		J.String text -> pure $ case J.fromJSON v of
 			J.Success utcTime -> B.UTC utcTime
-			J.Error _ -> B.String $ U.fromByteString_ $ T.encodeUtf8 text
+			J.Error _ -> B.String $ C.fromByteString_ $ T.encodeUtf8 text
 		J.Number num -> pure $ case num of
 			J.I int -> B.val int
 			J.D double -> B.Float double
@@ -130,8 +133,8 @@ instance J.FromJSON B.UserDefined where
 
 instance J.ToJSON B.Regex where
 	toJSON (B.Regex pattern options) = J.object [("#_BSON_Regex", J.object [
-		("pattern", J.String $ T.decodeUtf8 $ U.toByteString pattern),
-		("options", J.String $ T.decodeUtf8 $ U.toByteString options)] )]
+		("pattern", J.String $ T.decodeUtf8 $ C.toByteString pattern),
+		("options", J.String $ T.decodeUtf8 $ C.toByteString options)] )]
 
 instance J.FromJSON B.Regex where
 	parseJSON v = go `mplus` fail' where
@@ -139,13 +142,13 @@ instance J.FromJSON B.Regex where
 			J.Object dict <- return v
 			[("#_BSON_Regex", J.Object dict2)] <- return $ M.toList dict
 			[("pattern", J.String pattern), ("options", J.String options)] <- return $ M.toList dict2
-			return $ B.Regex (U.fromByteString_ $ T.encodeUtf8 pattern) (U.fromByteString_ $ T.encodeUtf8 options)
+			return $ B.Regex (C.fromByteString_ $ T.encodeUtf8 pattern) (C.fromByteString_ $ T.encodeUtf8 options)
 		fail' = fail $ "BSON Regex expects object with special field #_BSON_Regex, not " ++ show v
 
 instance J.ToJSON B.Javascript where
 	toJSON (B.Javascript environment code) = J.object [("#_BSON_Javascript", J.object [
 		("environment", J.toJSON environment),
-		("code", J.String $ T.decodeUtf8 $ U.toByteString code)] )]
+		("code", J.String $ T.decodeUtf8 $ C.toByteString code)] )]
 
 instance J.FromJSON B.Javascript where
 	parseJSON v = go `mplus` fail' where
@@ -153,18 +156,18 @@ instance J.FromJSON B.Javascript where
 			J.Object dict <- return v
 			[("#_BSON_Javascript", J.Object dict2)] <- return $ M.toList dict
 			[("environment", J.Object env), ("code", J.String code)] <- return $ M.toList dict2
-			flip B.Javascript (U.fromByteString_ $ T.encodeUtf8 code) <$> J.parseJSON (J.Object env)
+			flip B.Javascript (C.fromByteString_ $ T.encodeUtf8 code) <$> J.parseJSON (J.Object env)
 		fail' = fail $ "BSON Javascript expects object with special field #_BSON_Javascript, not " ++ show v
 
 instance J.ToJSON B.Symbol where
-	toJSON (B.Symbol string) = J.object [("#_BSON_Symbol", J.String $ T.decodeUtf8 $ U.toByteString string)]
+	toJSON (B.Symbol string) = J.object [("#_BSON_Symbol", J.String $ T.decodeUtf8 $ C.toByteString string)]
 
 instance J.FromJSON B.Symbol where
 	parseJSON v = go `mplus` fail' where
 		go = do
 			J.Object dict <- return v
 			[("#_BSON_MD5", J.String text)] <- return $ M.toList dict
-			return $ B.Symbol $ U.fromByteString_ $ T.encodeUtf8 text
+			return $ B.Symbol $ C.fromByteString_ $ T.encodeUtf8 text
 		fail' = fail $ "BSON Symbol expects object with special field #_BSON_Symbol, not " ++ show v
 
 instance J.ToJSON B.MongoStamp where
@@ -189,8 +192,9 @@ instance J.FromJSON B.MinMaxKey where
 			case text of "MinKey" -> return B.MinKey; "MaxKey" -> return B.MaxKey; _ -> mzero
 		fail' = fail $ "BSON MinMaxKey expects object with special field #_BSON_MinMaxKey, not " ++ show v
 
-instance J.ToJSON B.ObjectId where
-	toJSON x = J.object [("#_BSON_ObjectId", J.String $ T.pack $ show x)]
+instance J.ToJSON B.ObjectId where --TODO. should this be an Object?
+	toJSON x = J.String $ T.pack $ show x
+--J.object [("#_BSON_ObjectId", J.String $ T.pack $ show x)]
 
 instance J.FromJSON B.ObjectId where
 	parseJSON v = go `mplus` fail' where
@@ -199,3 +203,4 @@ instance J.FromJSON B.ObjectId where
 			[("#_BSON_ObjectId", J.String text)] <- return $ M.toList dict
 			return $ read $ T.unpack text
 		fail' = fail $ "BSON ObjectId expects object with special field #_BSON_ObjectId, not " ++ show v
+			--[("#_BSON_ObjectId", J.String text)] <- return $ M.toList dict
